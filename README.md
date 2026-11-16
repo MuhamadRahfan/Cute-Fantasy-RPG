@@ -9,14 +9,14 @@ Game 2D Top-Down Open World Fantasy RPG dengan gaya pixel art yang imut, dunia l
 - **Dev Server & Bundler**: Vite
 - **Mobile Wrapper**: Capacitor 7 (Android)
 - **Controls**: Virtual Joystick (8 arah + deadzone), Tombol Aksi (Attack, Interact, Pause)
-- **CI/CD**: GitHub Actions (`.github/workflows/build-apk.yml`)
+- **CI/CD**: GitHub Actions (`.github/workflows/android-build.yml`)
 
 ---
 
 ## 🚀 Cara Menjalankan di Development Mode (Lokal)
 
 ### 1. Prasyarat
-- Node.js (v18+) & npm
+- Node.js (v20+) & npm
 
 ### 2. Instalasi Dependency
 ```bash
@@ -40,7 +40,10 @@ npm run build
 
 ### 2. Sinkronisasi dengan Android Platform (Capacitor)
 ```bash
-npx cap add android   # Hanya jika folder android belum ada
+# Di Termux gunakan npm script (shebang /usr/bin/env tidak tersedia):
+npm run cap:sync
+
+# Di desktop/CI bisa juga:
 npx cap sync android
 ```
 
@@ -56,14 +59,12 @@ Hasil file APK Debug akan berada di:
 
 ## 🤖 Otomatisasi Build APK via GitHub Actions
 
-Workflow GitHub Actions telah dikonfigurasi di [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml).
+Workflow GitHub Actions telah dikonfigurasi di [`.github/workflows/android-build.yml`](.github/workflows/android-build.yml).
 
 ### Alur Kerja:
-1. Setiap kali melakukan **Push** ke branch `main`, atau membuat **Pull Request**, atau memicu **workflow_dispatch** secara manual di tab Actions GitHub.
-2. Server runner GitHub (Ubuntu) akan otomatis menyiapkan Java 17, Android SDK, menginstal dependency, menjalankan Vite build, menyinkronkan Capacitor, dan mengompilasi APK.
-3. File APK hasil kompilasi akan otomatis diunggah ke bagian **Artifacts** di halaman detail workflow run:
-   - `Cute-Fantasy-RPG-debug.apk` (Siap di-install langsung di HP Android)
-   - `Cute-Fantasy-RPG-release.apk` (Unsigned / perlu di-sign dengan keystore produksi untuk rilis Play Store).
+1. Berjalan otomatis saat **Push** ke branch `main`, atau manual lewat **workflow_dispatch** di tab Actions GitHub.
+2. Runner Ubuntu menyiapkan Node.js 20, JDK 21, Android SDK 35, menginstal dependency (`npm ci`), menjalankan Vite build, sinkronisasi Capacitor, lalu `./gradlew assembleDebug`.
+3. File `app-debug.apk` diunggah sebagai artifact **`Cute-Fantasy-RPG-debug`** di halaman detail workflow run. Artifact dapat diunduh, diekstrak, lalu di-install di HP Android.
 
 ---
 

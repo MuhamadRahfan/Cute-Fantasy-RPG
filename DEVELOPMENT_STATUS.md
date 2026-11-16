@@ -67,10 +67,11 @@
 - [ ] App pause / resume lifecycle management
 
 ### Phase 6 — CI/CD & Build [IN PROGRESS]
-- [x] GitHub Actions workflow (`.github/workflows/build-apk.yml`)
+- [x] GitHub Actions workflow (`.github/workflows/android-build.yml`)
 - [x] Gradle wrapper tracked in git
-- [x] JDK 21 configured (required by Capacitor 7)
-- [ ] Initial commit & push to trigger CI
+- [x] JDK 21 + Android SDK 35 configured (Capacitor 7)
+- [x] Initial commit created
+- [ ] Add Git remote & push to trigger CI
 - [ ] Verify debug APK artifact
 - [ ] Release APK signing setup
 
