@@ -1,12 +1,22 @@
 import Phaser from 'phaser';
 import Player from '../entities/Player.js';
+import GameState from '../systems/GameState.js';
 import { TILE_SIZE } from '../config/gameConfig.js';
 import { AUDIO_KEYS } from '../data/gameData.js';
+import { NPCS } from '../data/npcs.js';
+import { FARM_PLOTS, READY_STAGE, getCropStage, getCropProgress } from '../data/farm.js';
+import { QUESTS } from '../data/quests.js';
+import { ITEMS } from '../data/items.js';
+import { getDialogue } from '../data/dialogues.js';
 
 export const MAP_COLS = 64;
 export const MAP_ROWS = 48;
 export const WORLD_WIDTH = MAP_COLS * TILE_SIZE; // 1024 px
 export const WORLD_HEIGHT = MAP_ROWS * TILE_SIZE; // 768 px
+
+const SAVE_KEY = 'cute_fantasy_rpg_save';
+const DOOR_X = 15 * TILE_SIZE;
+const DOOR_Y = 12 * TILE_SIZE;
 
 export default class WorldScene extends Phaser.Scene {
   constructor() {
@@ -16,9 +26,19 @@ export default class WorldScene extends Phaser.Scene {
   init(data) {
     this.isNewGame = data.isNewGame !== false;
     this.saveData = data.saveData || null;
+    this.uiBusy = false;
+    this.uiLockedUntil = 0;
+    this.lastPromptKey = null;
+    this.nextFarmRefresh = 0;
   }
 
   create() {
+    // Persistent RPG state (inventory, quests, farm, gold, flags).
+    this.state = new GameState(this.saveData?.state || null, {
+      legacyChestOpen: this.saveData?.chestOpen
+    });
+    this.registry.set('gameState', this.state);
+
     // Configure world bounds
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
@@ -32,12 +52,10 @@ export default class WorldScene extends Phaser.Scene {
     const spawnX = Number.isFinite(this.saveData?.x) ? this.saveData.x : 240;
     const spawnY = Number.isFinite(this.saveData?.y) ? this.saveData.y : 220;
     this.player = new Player(this, spawnX, spawnY);
+    this.player.spawnPoint = { x: 240, y: 220 };
 
-    if (this.saveData) {
-      if (Number.isFinite(this.saveData.hp)) {
-        this.player.hp = Phaser.Math.Clamp(this.saveData.hp, 1, this.player.maxHp);
-      }
-      this.player.spawnPoint = { x: spawnX, y: spawnY };
+    if (this.saveData && Number.isFinite(this.saveData.hp)) {
+      this.player.hp = Phaser.Math.Clamp(this.saveData.hp, 1, this.player.maxHp);
     }
 
     // Player collides with world obstacles
@@ -51,12 +69,12 @@ export default class WorldScene extends Phaser.Scene {
 
     // Keyboard cursors as desktop/debug fallback
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,SPACE,E,J,K,ESC,P');
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,SPACE,E,J,K,ESC,P,Q,I');
 
-    // Spawn initial ambient farm animals
+    // Village NPCs, farmland plots, ambient animals and monsters
+    this.spawnNPCs();
+    this.spawnFarmPlots();
     this.spawnAnimals();
-
-    // Spawn initial monsters across the river
     this.spawnEnemies();
 
     // Setup audio manager helper
@@ -92,10 +110,15 @@ export default class WorldScene extends Phaser.Scene {
       ui?.events?.off('joystick:move', this.uiHandlers.move);
       ui?.events?.off('button:attack', this.uiHandlers.attack);
       ui?.events?.off('button:interact', this.uiHandlers.interact);
+      this.events.off('player:attack', this.onPlayerAttack);
     });
 
-    // Notify UI of initial player health
-    this.events.emit('player:healthChanged', this.player.hp, this.player.maxHp);
+    this.refreshUI();
+
+    // Create a baseline save immediately so CONTINUE works even on a quick exit.
+    if (this.isNewGame) {
+      this.saveGame();
+    }
   }
 
   buildWorldTerrain() {
@@ -122,7 +145,7 @@ export default class WorldScene extends Phaser.Scene {
 
     // 4. North cliff ridge (rows 0..3)
     for (let c = 0; c < MAP_COLS; c += 3) {
-      const cliff = this.add.image(c * TILE_SIZE, 0, 'tiles_cliff').setOrigin(0).setDepth(1);
+      this.add.image(c * TILE_SIZE, 0, 'tiles_cliff').setOrigin(0).setDepth(1);
       const obs = this.obstacles.create(c * TILE_SIZE + 24, 24, null);
       obs.setSize(48, 48).setVisible(false);
     }
@@ -148,7 +171,7 @@ export default class WorldScene extends Phaser.Scene {
     }
 
     // 7. Wood Bridge across the river (col 37, row 13)
-    const bridge = this.add.image(36 * TILE_SIZE, 13 * TILE_SIZE, 'obj_bridge').setOrigin(0).setDepth(2);
+    this.add.image(36 * TILE_SIZE, 13 * TILE_SIZE, 'obj_bridge').setOrigin(0).setDepth(2);
 
     // 8. Blue-roof Village House (col 12, row 7)
     const house = this.add.image(12 * TILE_SIZE, 7 * TILE_SIZE, 'obj_house').setOrigin(0);
@@ -168,13 +191,11 @@ export default class WorldScene extends Phaser.Scene {
     // 10. Chest in front of the house
     this.chest = this.physics.add.staticSprite(18 * TILE_SIZE, 13 * TILE_SIZE, 'obj_chest');
     this.chest.setDepth(this.chest.y + 8);
-    this.chest.isOpen = false;
-    this.obstacles.add(this.chest);
-
-    if (this.saveData?.chestOpen) {
-      this.chest.isOpen = true;
+    this.chest.isOpen = Boolean(this.state.chestOpened);
+    if (this.chest.isOpen) {
       this.chest.setTint(0xf0c674);
     }
+    this.obstacles.add(this.chest);
 
     // 11. Oak Trees placed in groves with realistic trunk collision
     const treePositions = [
@@ -204,15 +225,118 @@ export default class WorldScene extends Phaser.Scene {
     });
   }
 
+  spawnNPCs() {
+    this.npcs = this.physics.add.staticGroup();
+    this.npcEntries = NPCS.map((data) => {
+      const npc = this.npcs.create(data.x, data.y, 'player', 0);
+      npc.setFlipX(Boolean(data.flipX));
+      npc.setTint(data.tint ?? 0xffffff);
+      npc.setDepth(data.y + 10);
+      npc.setSize(12, 12).setOffset(10, 18);
+      npc.refreshBody();
+      npc.npcId = data.id;
+      npc.npcName = data.name;
+      npc.anims.play('player_idle_down', true);
+
+      const label = this.add.text(data.x, data.y - 22, data.name, {
+        fontSize: '7px',
+        color: '#ffe8b3',
+        fontFamily: 'monospace',
+        backgroundColor: '#131a24aa',
+        padding: { left: 3, right: 3, top: 1, bottom: 1 }
+      }).setOrigin(0.5, 1).setDepth(data.y + 11);
+
+      return { npc, label };
+    });
+
+    this.physics.add.collider(this.player, this.npcs);
+  }
+
+  spawnFarmPlots() {
+    this.farmPlots = FARM_PLOTS.map((plot, index) => {
+      const graphics = this.add.graphics();
+      graphics.setPosition(plot.x, plot.y);
+      graphics.setDepth(2);
+
+      return {
+        id: String(index),
+        x: plot.x,
+        y: plot.y,
+        graphics
+      };
+    });
+
+    this.updateFarmVisuals();
+  }
+
+  updateFarmVisuals() {
+    const now = Date.now();
+
+    for (const plot of this.farmPlots) {
+      const g = plot.graphics;
+      g.clear();
+
+      // Tilled soil marker on top of the existing farmland tile.
+      g.fillStyle(0x5a3d24, 0.6);
+      g.fillRoundedRect(-7, -7, 14, 14, 2);
+      g.lineStyle(1, 0x8a6642, 0.85);
+      g.strokeRoundedRect(-7, -7, 14, 14, 2);
+
+      const crop = this.state.farmPlots[plot.id];
+      if (!crop) continue;
+
+      const stage = getCropStage(crop.plantedAt, now);
+
+      if (stage === 0) {
+        g.fillStyle(0xd9b44a, 1);
+        g.fillRect(-1, 1, 2, 2);
+        continue;
+      }
+
+      if (stage === 1) {
+        g.lineStyle(2, 0x6fbf73, 1);
+        g.beginPath();
+        g.moveTo(0, 3);
+        g.lineTo(0, -2);
+        g.strokePath();
+        g.fillStyle(0x8fd694, 1);
+        g.fillCircle(-2, -2, 1.5);
+        continue;
+      }
+
+      if (stage === 2) {
+        g.lineStyle(2, 0x5faf64, 1);
+        g.beginPath();
+        g.moveTo(0, 3);
+        g.lineTo(0, -5);
+        g.strokePath();
+        g.fillStyle(0x8fd694, 1);
+        g.fillCircle(-3, -4, 2);
+        g.fillCircle(3, -5, 2);
+        continue;
+      }
+
+      // Ready to harvest.
+      g.fillStyle(0xf3e5cf, 1);
+      g.fillCircle(0, 2, 4);
+      g.lineStyle(1, 0xffffff, 0.7);
+      g.strokeCircle(0, 2, 4);
+      g.fillStyle(0x6fbf73, 1);
+      g.fillCircle(-3, -4, 2);
+      g.fillCircle(3, -4, 2);
+      g.fillCircle(0, -6, 2);
+    }
+  }
+
   spawnAnimals() {
     this.animals = this.physics.add.group();
 
     const animalData = [
-      { type: 'chicken', x: 80, y: 90 },
-      { type: 'chicken', x: 110, y: 120 },
-      { type: 'cow', x: 90, y: 140 },
-      { type: 'pig', x: 150, y: 90 },
-      { type: 'sheep', x: 140, y: 140 }
+      { type: 'chicken', x: 80, y: 160 },
+      { type: 'chicken', x: 110, y: 176 },
+      { type: 'cow', x: 96, y: 196 },
+      { type: 'pig', x: 150, y: 164 },
+      { type: 'sheep', x: 142, y: 198 }
     ];
 
     animalData.forEach((a) => {
@@ -348,9 +472,8 @@ export default class WorldScene extends Phaser.Scene {
     });
 
     // Listen to player attack broadcast
-    this.events.on('player:attack', (atk) => {
-      this.checkCombatHits(atk);
-    });
+    this.onPlayerAttack = (atk) => this.checkCombatHits(atk);
+    this.events.on('player:attack', this.onPlayerAttack);
   }
 
   checkCombatHits(atk) {
@@ -412,6 +535,7 @@ export default class WorldScene extends Phaser.Scene {
     enemy.anims.play(deathAnim, true);
 
     this.events.emit('enemy:defeated', enemy.enemyType);
+    this.grantEnemyRewards(enemy.enemyType);
 
     this.tweens.add({
       targets: enemy,
@@ -423,34 +547,311 @@ export default class WorldScene extends Phaser.Scene {
     });
   }
 
+  grantEnemyRewards(enemyType) {
+    const isSlime = enemyType === 'slime';
+    const drops = isSlime
+      ? [{ id: 'slime_gel', chance: 1 }, { id: 'potion', chance: 0.15 }]
+      : [{ id: 'bone', chance: 1 }, { id: 'potion', chance: 0.2 }];
+
+    const gained = [];
+    for (const drop of drops) {
+      if (Math.random() > drop.chance) continue;
+      if (this.state.addItem(drop.id, 1)) {
+        gained.push(`${ITEMS[drop.id]?.name || drop.id} x1`);
+      }
+    }
+
+    const gold = isSlime ? 2 : 4;
+    this.state.gold += gold;
+    this.applyTrack('kill', enemyType, 1);
+
+    if (gained.length > 0) {
+      this.events.emit('ui:notify', `${gained.join(', ')}  +${gold} koin`);
+    }
+
+    this.refreshUI();
+    this.saveGame();
+  }
+
+  getNearbyInteraction() {
+    const playerX = this.player.x;
+    const playerY = this.player.y;
+    let best = null;
+
+    const consider = (type, object, maxDistance, label) => {
+      const distance = Phaser.Math.Distance.Between(playerX, playerY, object.x, object.y);
+      if (distance > maxDistance) return;
+      if (best && best.distance <= distance) return;
+      best = { type, object, distance, label };
+    };
+
+    if (this.chest && !this.state.chestOpened) {
+      consider('chest', this.chest, 34, 'Buka peti');
+    }
+
+    consider('door', { x: DOOR_X, y: DOOR_Y }, 36, 'Periksa pintu');
+
+    for (const entry of this.npcEntries || []) {
+      consider('npc', entry.npc, 42, `Bicara dengan ${entry.npc.npcName}`);
+    }
+
+    for (const plot of this.farmPlots || []) {
+      const crop = this.state.farmPlots[plot.id];
+      if (!crop) {
+        consider('plot', plot, 26, 'Cangkul & tanam bibit');
+        continue;
+      }
+
+      const stage = getCropStage(crop.plantedAt);
+      consider(
+        'plot',
+        plot,
+        26,
+        stage >= READY_STAGE ? 'Panen Lobak' : 'Lihat tanaman'
+      );
+    }
+
+    return best;
+  }
+
+  updateInteractionPrompt() {
+    const nearby = this.getNearbyInteraction();
+    const key = nearby
+      ? `${nearby.type}|${nearby.object.id ?? nearby.object.npcId ?? ''}|${nearby.label}`
+      : '';
+
+    if (key === this.lastPromptKey) return;
+    this.lastPromptKey = key;
+    this.events.emit('ui:prompt', nearby ? `ACT: ${nearby.label}` : '');
+  }
+
   handleInteraction() {
-    // Check distance to chest
-    const distToChest = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.chest.x, this.chest.y);
-    if (distToChest < 32 && !this.chest.isOpen) {
-      this.chest.isOpen = true;
-      this.chest.setTint(0xf0c674);
-      this.soundManager.play(AUDIO_KEYS.CHEST_OPEN, { volume: 0.9 });
-      this.events.emit('ui:notify', 'Membuka peti: Mendapatkan Ramuan Herbal!');
+    if (this.uiBusy || this.game.loop.time < this.uiLockedUntil) return;
+
+    const nearby = this.getNearbyInteraction();
+    if (!nearby) {
+      this.events.emit('ui:notify', 'Tidak ada objek di dekatmu.');
       return;
     }
 
-    // Check distance to house door
-    const doorX = 15 * TILE_SIZE;
-    const doorY = 12 * TILE_SIZE;
-    const distToDoor = Phaser.Math.Distance.Between(this.player.x, this.player.y, doorX, doorY);
-    if (distToDoor < 36) {
+    if (nearby.type === 'chest') {
+      this.openChest();
+      return;
+    }
+
+    if (nearby.type === 'door') {
       this.soundManager.play(AUDIO_KEYS.DOOR_OPEN, { volume: 0.9 });
       this.events.emit('ui:notify', 'Pintu Rumah Terkunci dengan Rapi.');
       return;
     }
 
-    this.events.emit('ui:notify', 'Tidak ada objek di dekatmu.');
+    if (nearby.type === 'npc') {
+      this.openDialog(nearby.object);
+      return;
+    }
+
+    if (nearby.type === 'plot') {
+      this.interactPlot(nearby.object);
+    }
+  }
+
+  openChest() {
+    if (this.state.chestOpened) {
+      this.events.emit('ui:notify', 'Peti ini sudah kosong.');
+      return;
+    }
+
+    this.state.chestOpened = true;
+    this.state.addItem('potion', 1);
+    this.state.addItem('turnip_seed', 3);
+    this.state.gold += 5;
+
+    this.chest.isOpen = true;
+    this.chest.setTint(0xf0c674);
+    this.soundManager.play(AUDIO_KEYS.CHEST_OPEN, { volume: 0.9 });
+    this.events.emit('ui:notify', 'Peti: Ramuan Herbal x1, Bibit Lobak x3, 5 koin!');
+
+    this.lastPromptKey = null;
+    this.refreshUI();
+    this.saveGame();
+  }
+
+  interactPlot(plot) {
+    const crop = this.state.farmPlots[plot.id];
+
+    if (!crop) {
+      if (!this.state.hasItem('turnip_seed', 1)) {
+        this.events.emit('ui:notify', 'Butuh Bibit Lobak untuk menanam.');
+        return;
+      }
+
+      this.state.removeItem('turnip_seed', 1);
+      this.state.farmPlots[plot.id] = {
+        crop: 'turnip',
+        plantedAt: Date.now()
+      };
+      this.events.emit('ui:notify', 'Menanam Bibit Lobak. Panen dalam ~30 detik.');
+      this.updateFarmVisuals();
+      this.refreshUI();
+      this.saveGame();
+      return;
+    }
+
+    const stage = getCropStage(crop.plantedAt);
+    if (stage < READY_STAGE) {
+      const progress = getCropProgress(crop.plantedAt);
+      this.events.emit('ui:notify', `Lobak sedang tumbuh (${progress}%).`);
+      return;
+    }
+
+    delete this.state.farmPlots[plot.id];
+    this.state.addItem('turnip', 1);
+    this.soundManager.play(AUDIO_KEYS.CHEST_OPEN, { volume: 0.5 });
+    this.events.emit('ui:notify', 'Panen Lobak x1!');
+    this.applyTrack('harvest', 'turnip', 1);
+    this.updateFarmVisuals();
+    this.refreshUI();
+    this.saveGame();
+  }
+
+  openDialog(npc) {
+    const dialogue = getDialogue(npc.npcId, this.state);
+
+    this.uiBusy = true;
+    this.events.emit('ui:prompt', '');
+    this.scene.launch('DialogScene', {
+      name: npc.npcName,
+      lines: dialogue.lines,
+      actions: dialogue.actions
+    });
+    this.scene.pause();
+  }
+
+  onDialogClosed(actions = []) {
+    this.applyDialogActions(actions);
+    this.uiBusy = false;
+    this.uiLockedUntil = this.game.loop.time + 250;
+    this.lastPromptKey = null;
+    this.scene.resume();
+    this.refreshUI();
+    this.saveGame();
+  }
+
+  applyDialogActions(actions = []) {
+    for (const action of actions) {
+      if (action.type === 'startQuest') {
+        if (this.state.startQuest(action.id)) {
+          const quest = QUESTS[action.id];
+          this.events.emit('ui:notify', `Quest baru: ${quest?.title || action.id}`);
+        }
+        continue;
+      }
+
+      if (action.type === 'track') {
+        this.applyTrack(action.kind, action.target, action.amount || 1);
+        continue;
+      }
+
+      if (action.type === 'giveItem') {
+        if (action.once && this.state.flags[action.once]) continue;
+        if (!this.state.addItem(action.id, action.amount || 1)) continue;
+
+        if (action.once) this.state.flags[action.once] = true;
+        const item = ITEMS[action.id];
+        this.events.emit(
+          'ui:notify',
+          `Mendapat ${item?.name || action.id} x${action.amount || 1}.`
+        );
+      }
+    }
+  }
+
+  applyTrack(type, target, amount = 1) {
+    const completed = this.state.track(type, target, amount);
+    for (const quest of completed) {
+      this.soundManager.play(AUDIO_KEYS.CHEST_OPEN, { volume: 0.6 });
+      this.events.emit('ui:notify', `Quest selesai: ${quest.title}!`);
+    }
+    return completed;
+  }
+
+  openInventory() {
+    if (this.uiBusy) return;
+    this.uiBusy = true;
+    this.lastPromptKey = null;
+    this.events.emit('ui:prompt', '');
+    this.scene.launch('InventoryScene');
+    this.scene.pause();
+  }
+
+  onInventoryClosed() {
+    this.uiBusy = false;
+    this.uiLockedUntil = this.game.loop.time + 250;
+    this.lastPromptKey = null;
+    this.scene.resume();
+    this.refreshUI();
+  }
+
+  openQuests() {
+    if (this.uiBusy) return;
+    this.uiBusy = true;
+    this.lastPromptKey = null;
+    this.events.emit('ui:prompt', '');
+    this.scene.launch('QuestScene');
+    this.scene.pause();
+  }
+
+  onQuestClosed() {
+    this.uiBusy = false;
+    this.uiLockedUntil = this.game.loop.time + 250;
+    this.lastPromptKey = null;
+    this.scene.resume();
+    this.refreshUI();
+  }
+
+  refreshUI() {
+    if (this.player) {
+      this.events.emit('player:healthChanged', this.player.hp, this.player.maxHp);
+    }
+    this.events.emit('ui:refresh');
+  }
+
+  saveGame() {
+    if (!this.player || !this.state) return false;
+
+    const data = {
+      version: 2,
+      x: Math.round(this.player.x),
+      y: Math.round(this.player.y),
+      hp: this.player.hp,
+      chestOpen: this.state.chestOpened,
+      state: this.state.serialize(),
+      timestamp: Date.now()
+    };
+
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      return true;
+    } catch (error) {
+      console.warn('[Save] Gagal menyimpan game:', error);
+      return false;
+    }
   }
 
   update(time, delta) {
-    if (this.player && this.player.active) {
+    if (this.player && this.player.active && !this.uiBusy) {
       // Desktop / keyboard fallback controls.
       if (this.keys) {
+        if (Phaser.Input.Keyboard.JustDown(this.keys.I) && time >= this.uiLockedUntil) {
+          this.openInventory();
+          return;
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.keys.Q) && time >= this.uiLockedUntil) {
+          this.openQuests();
+          return;
+        }
+
         if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || Phaser.Input.Keyboard.JustDown(this.keys.J)) {
           this.attackTriggered = true;
         }
@@ -462,15 +863,23 @@ export default class WorldScene extends Phaser.Scene {
         const pausePressed = Phaser.Input.Keyboard.JustDown(this.keys.ESC) ||
           Phaser.Input.Keyboard.JustDown(this.keys.P);
         if (pausePressed && time > (this.pauseLockedUntil || 0)) {
+          this.saveGame();
           this.scene.pause();
           this.scene.launch('PauseScene');
           return;
         }
       }
 
+      this.updateInteractionPrompt();
       this.player.update(this.moveVector, this.attackTriggered);
     }
     this.attackTriggered = false;
+
+    // Refresh crop visuals a few times per second so growth is visible.
+    if (time > this.nextFarmRefresh) {
+      this.nextFarmRefresh = time + 500;
+      this.updateFarmVisuals();
+    }
 
     // Update enemies AI
     if (this.enemies) {

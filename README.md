@@ -1,6 +1,6 @@
 # ⚔️ Cute Fantasy RPG (Android & Web)
 
-Game 2D Top-Down Open World Fantasy RPG dengan gaya pixel art yang imut, dunia luas, karakter yang dapat dikendalikan, pertarungan real-time, monster (Slime & Skeleton), hewan ternak pasif, sistem interaksi peti harta, pintu rumah, HUD darah, dan Virtual Joystick mobile khusus touchscreen Android landscape.
+Game 2D Top-Down Open World Fantasy RPG dengan gaya pixel art yang imut, dunia luas, karakter yang dapat dikendalikan, pertarungan real-time, monster (Slime & Skeleton), hewan ternak pasif, NPC dengan dialog bercabang, inventory, quest, farming (tanam & panen lobak), peti harta, pintu rumah, HUD darah/koin, dan Virtual Joystick mobile khusus touchscreen Android landscape.
 
 ---
 
@@ -8,7 +8,7 @@ Game 2D Top-Down Open World Fantasy RPG dengan gaya pixel art yang imut, dunia l
 - **Engine**: Phaser 3 (Arcade Physics, ES Modules)
 - **Dev Server & Bundler**: Vite
 - **Mobile Wrapper**: Capacitor 7 (Android)
-- **Controls**: Virtual Joystick (8 arah + deadzone), Tombol Aksi (Attack, Interact, Pause)
+- **Controls**: Virtual Joystick (8 arah + deadzone), Tombol Aksi (Attack, Interact, Quest, Tas, Pause)
 - **CI/CD**: GitHub Actions (`.github/workflows/android-build.yml`)
 
 ---
@@ -72,9 +72,24 @@ Workflow GitHub Actions telah dikonfigurasi di [`.github/workflows/android-build
 - **Mobile Touchscreen (Landscape)**:
   - **Joystick Kiri**: Gerak 8-arah (berjalan halus).
   - **Tombol Kanan (ATK)**: Serangan tebasan pedang ke arah hadap karakter.
-  - **Tombol Kanan (ACT)**: Interaksi objek (membuka peti, memeriksa pintu rumah).
-  - **Tombol Atas (||)**: Menu jeda / Pause game (Resume, Save, Menu Utama).
+  - **Tombol Kanan (ACT)**: Interaksi objek (bicara NPC, buka peti, tanam/panen, periksa pintu).
+  - **Tombol Atas (Q)**: Buka catatan quest. Tracker quest di kanan atas juga bisa disentuh.
+  - **Tombol Atas (TAS)**: Buka inventory (pakai/buang item).
+  - **Tombol Atas (||)**: Menu jeda / Pause game (Resume, Tas, Quest, Save, Menu Utama).
 - **Desktop Keyboard (Pengujian)**:
   - `W, A, S, D` atau Tombol Panah: Gerak karakter.
   - `Space` / `J`: Serang.
   - `E` / `K`: Interaksi.
+  - `I`: Inventory.
+  - `Q`: Catatan quest.
+  - `Esc` / `P`: Pause.
+
+---
+
+## 🧭 Alur Awal & Sistem RPG
+1. Bicara dengan **Kepala Desa** di dekat titik spawn untuk memulai quest slime.
+2. Seberangi jembatan kayu di timur desa, kalahkan 4 slime, lalu kembali ke Kepala Desa.
+3. Bicara dengan **Pak Tani**, tanam Bibit Lobak di 6 petak kebun, tunggu ±30 detik, lalu panen 3 Lobak.
+4. **Pedagang** memberi hadiah Ramuan Herbal sekali. Peti di depan rumah berisi Ramuan, Bibit, dan koin.
+5. Inventory menyimpan item dan bisa memakai Ramuan/Lobak untuk memulihkan HP.
+6. Save (otomatis saat peti/quest/kill/panen, atau via menu Pause) menyimpan posisi, HP, inventory, quest, kebun, koin, dan flag dialog.

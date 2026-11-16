@@ -144,6 +144,15 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     });
   }
 
+  heal(amount) {
+    if (!this.active || this.isDead || amount <= 0) return false;
+    if (this.hp >= this.maxHp) return false;
+
+    this.hp = Math.min(this.maxHp, this.hp + amount);
+    this.scene.events.emit('player:healthChanged', this.hp, this.maxHp);
+    return true;
+  }
+
   takeDamage(amount, sourceX = 0, sourceY = 0) {
     if (this.invulnerable || this.isDead) return;
 
