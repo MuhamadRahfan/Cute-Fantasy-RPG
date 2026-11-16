@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing & Logs
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production builds
+dist/
+build/
+
+# Android & Gradle
+.gradle/
+android/app/build/
+android/build/
+android/.gradle/
+android/captures/
+android/local.properties
+*.keystore
+*.jks
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Original asset dump (identical copy lives in public/assets for the build)
+assets/
+
+# Large ZIP archive (keep original intact locally, don't bloat git repo)
+Cute_Fantasy_RPG_Assets_Organized.zip

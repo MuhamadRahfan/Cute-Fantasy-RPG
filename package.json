@@ -1,0 +1,26 @@
+{
+  "name": "cute-fantasy-rpg",
+  "version": "1.0.0",
+  "private": true,
+  "description": "2D Top-Down Open World Fantasy RPG built with Phaser 3, Vite, and Capacitor for Android",
+  "type": "module",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node node_modules/vite/bin/vite.js build",
+    "preview": "node node_modules/vite/bin/vite.js preview",
+    "cap:sync": "node node_modules/@capacitor/cli/bin/capacitor sync android",
+    "cap:open": "node node_modules/@capacitor/cli/bin/capacitor open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.1",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.1",
+    "@capacitor/screen-orientation": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
+    "phaser": "^3.88.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.1",
+    "vite": "^6.4.6"
+  }
+}
